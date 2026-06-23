@@ -64,6 +64,43 @@ func Messages(msgs []map[string]any, contentEnabled bool) string {
 	return string(b)
 }
 
+// Value recursively redacts free-text content from an arbitrary value when
+// contentEnabled is false. Structure (map keys, slice shape) is preserved; only
+// string leaf values are replaced with Placeholder. Non-string scalars (numbers,
+// booleans, nil) are left unchanged.
+//
+// This is used for Layer-2 traceloop.entity.input / traceloop.entity.output
+// payloads that carry free-form tool arguments and results.
+func Value(v any, contentEnabled bool) any {
+	if contentEnabled {
+		return v
+	}
+	return redactValue(v)
+}
+
+// redactValue recursively replaces string leaves with Placeholder.
+func redactValue(v any) any {
+	switch val := v.(type) {
+	case string:
+		return Placeholder
+	case map[string]any:
+		out := make(map[string]any, len(val))
+		for k, vv := range val {
+			out[k] = redactValue(vv)
+		}
+		return out
+	case []any:
+		out := make([]any, len(val))
+		for i, vv := range val {
+			out[i] = redactValue(vv)
+		}
+		return out
+	default:
+		// Numbers, booleans, nil — preserve as-is.
+		return v
+	}
+}
+
 // redactMessage returns a shallow copy of msg with content and tool-call
 // arguments replaced by Placeholder.
 func redactMessage(msg map[string]any) map[string]any {

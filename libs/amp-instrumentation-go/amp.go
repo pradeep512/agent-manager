@@ -51,6 +51,7 @@ package amp
 
 import (
 	"context"
+	"encoding/json"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -207,6 +208,86 @@ func LLMSpan(ctx context.Context, input LLMInput) (context.Context, *Span, *LLMR
 		}
 		if result.Usage.CacheCreationInputTokens > 0 {
 			otelSpan.SetAttributes(attribute.Int64("gen_ai.usage.cache_creation_input_tokens", result.Usage.CacheCreationInputTokens))
+		}
+	}
+
+	return ctx, s, result
+}
+
+// --------------------------------------------------------------------------
+// Tool span
+// --------------------------------------------------------------------------
+
+// ToolInput holds the parameters for one tool / function call. Required field
+// is Name; all others are optional.
+type ToolInput struct {
+	// Name is the tool / function name (gen_ai.tool.name). Required.
+	Name string
+	// Description is the tool's human-readable description (gen_ai.tool.description). Optional.
+	Description string
+	// CallID is the tool call identifier from the LLM response (gen_ai.tool.call.id). Optional.
+	CallID string
+	// Arguments is the map of named arguments passed to the tool. Optional; serialised
+	// to JSON and stored in traceloop.entity.input, with content redacted when
+	// AMP_TRACE_CONTENT=false.
+	Arguments map[string]any
+}
+
+// ToolResult is filled by the caller after the tool returns.
+type ToolResult struct {
+	// Output is the tool's return value. Optional; serialised to JSON and stored
+	// in traceloop.entity.output, with content redacted when AMP_TRACE_CONTENT=false.
+	Output any
+}
+
+// ToolSpan starts a tool execution span, returning (ctx, span, result). The
+// caller fills result.Output after the tool returns, then calls span.End().
+//
+// Attributes written at Start:
+//   - gen_ai.operation.name = "execute_tool"
+//   - gen_ai.tool.name
+//   - gen_ai.tool.description (if set)
+//   - gen_ai.tool.call.id (if set)
+//   - traceloop.entity.input (if Arguments is set)
+//
+// Attributes written at End (from result):
+//   - traceloop.entity.output (if Output is set)
+func ToolSpan(ctx context.Context, input ToolInput) (context.Context, *Span, *ToolResult) {
+	cfg := loadConfigCached()
+
+	tracer := otel.GetTracerProvider().Tracer(tracerName)
+	ctx, otelSpan := tracer.Start(ctx, "execute_tool", trace.WithSpanKind(trace.SpanKindInternal))
+
+	// Write start-time attributes.
+	otelSpan.SetAttributes(
+		attribute.String("gen_ai.operation.name", "execute_tool"),
+		attribute.String("gen_ai.tool.name", input.Name),
+	)
+	if input.Description != "" {
+		otelSpan.SetAttributes(attribute.String("gen_ai.tool.description", input.Description))
+	}
+	if input.CallID != "" {
+		otelSpan.SetAttributes(attribute.String("gen_ai.tool.call.id", input.CallID))
+	}
+	if len(input.Arguments) > 0 {
+		redacted := redact.Value(map[string]any(input.Arguments), cfg.TraceContent)
+		if b, err := json.Marshal(redacted); err == nil {
+			otelSpan.SetAttributes(attribute.String("traceloop.entity.input", string(b)))
+		}
+	}
+
+	result := &ToolResult{}
+
+	s := &Span{
+		span:         otelSpan,
+		traceContent: cfg.TraceContent,
+	}
+	s.endAttributes = func() {
+		if result.Output != nil {
+			redacted := redact.Value(result.Output, s.traceContent)
+			if b, err := json.Marshal(redacted); err == nil {
+				otelSpan.SetAttributes(attribute.String("traceloop.entity.output", string(b)))
+			}
 		}
 	}
 

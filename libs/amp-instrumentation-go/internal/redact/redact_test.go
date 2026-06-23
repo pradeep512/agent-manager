@@ -139,3 +139,85 @@ func TestMessages_ContentDisabled_OriginalUnmodified(t *testing.T) {
 		t.Error("original msgs slice must not be mutated")
 	}
 }
+
+// TestValue_ContentEnabled asserts that Value returns the input unchanged when
+// content tracing is on.
+func TestValue_ContentEnabled(t *testing.T) {
+	got := redact.Value(map[string]any{"key": "secret"}, true)
+	m, ok := got.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map, got %T", got)
+	}
+	if m["key"] != "secret" {
+		t.Errorf("expected 'secret', got %v", m["key"])
+	}
+}
+
+// TestValue_ContentDisabled_StringRedacted asserts that a string value is
+// replaced with the placeholder when content tracing is off.
+func TestValue_ContentDisabled_StringRedacted(t *testing.T) {
+	got := redact.Value("sensitive", false)
+	if got != redact.Placeholder {
+		t.Errorf("expected %q, got %v", redact.Placeholder, got)
+	}
+}
+
+// TestValue_ContentDisabled_MapValuesRedacted asserts that string values inside
+// a map are redacted while the map structure (keys) is preserved.
+func TestValue_ContentDisabled_MapValuesRedacted(t *testing.T) {
+	input := map[string]any{
+		"location": "London",
+		"units":    "celsius",
+	}
+	got := redact.Value(input, false)
+	m, ok := got.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map, got %T", got)
+	}
+	if m["location"] != redact.Placeholder {
+		t.Errorf("map string value should be redacted, got %v", m["location"])
+	}
+	if m["units"] != redact.Placeholder {
+		t.Errorf("map string value should be redacted, got %v", m["units"])
+	}
+	// Keys must exist (structure preserved).
+	if _, ok := m["location"]; !ok {
+		t.Error("key 'location' should still exist in redacted map")
+	}
+}
+
+// TestValue_ContentDisabled_ListItemsRedacted asserts that string elements inside
+// a slice are redacted.
+func TestValue_ContentDisabled_ListItemsRedacted(t *testing.T) {
+	input := []any{"item1", "item2"}
+	got := redact.Value(input, false)
+	s, ok := got.([]any)
+	if !ok {
+		t.Fatalf("expected []any, got %T", got)
+	}
+	for i, v := range s {
+		if v != redact.Placeholder {
+			t.Errorf("slice[%d] should be %q, got %v", i, redact.Placeholder, v)
+		}
+	}
+}
+
+// TestValue_ContentDisabled_NonStringPreserved asserts that non-string scalars
+// (numbers, booleans) are not redacted.
+func TestValue_ContentDisabled_NonStringPreserved(t *testing.T) {
+	input := map[string]any{
+		"count": 42,
+		"flag":  true,
+	}
+	got := redact.Value(input, false)
+	m, ok := got.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map, got %T", got)
+	}
+	if m["count"] != 42 {
+		t.Errorf("integer should be preserved, got %v", m["count"])
+	}
+	if m["flag"] != true {
+		t.Errorf("bool should be preserved, got %v", m["flag"])
+	}
+}
