@@ -204,18 +204,13 @@ func LLMSpan(ctx context.Context, input LLMInput) (context.Context, *Span, *LLMR
 			otelSpan.SetAttributes(attribute.String("gen_ai.output.messages",
 				redact.Messages(result.OutputMessages, s.traceContent)))
 		}
-		// Always set usage — required by the observer.
-		otelSpan.SetAttributes(
-			attribute.Int64("gen_ai.usage.input_tokens", result.Usage.InputTokens),
-			attribute.Int64("gen_ai.usage.output_tokens", result.Usage.OutputTokens),
-		)
-		if result.Usage.CacheReadInputTokens > 0 {
-			otelSpan.SetAttributes(attribute.Int64("gen_ai.usage.cache_read_input_tokens", result.Usage.CacheReadInputTokens))
-		}
-		if result.Usage.CacheCreationInputTokens > 0 {
-			otelSpan.SetAttributes(attribute.Int64("gen_ai.usage.cache_creation_input_tokens", result.Usage.CacheCreationInputTokens))
-		}
+		// Emit the full usage attribute set (required + optional, incl. Anthropic
+		// ephemeral split and metadata). LLMUsage.Attributes() handles all fields
+		// and omits optional keys when zero/empty.
+		otelSpan.SetAttributes(result.Usage.Attributes()...)
 		// Roll up this call's usage into the nearest ancestor agent span.
+		// The accumulator tracks input, output, cache read, and cache creation.
+		// Ephemeral split and metadata are leaf-span-only (no accumulator fields).
 		// Safe when acc is nil (LLMSpan used without an enclosing AgentSpan).
 		if acc != nil {
 			acc.Add(

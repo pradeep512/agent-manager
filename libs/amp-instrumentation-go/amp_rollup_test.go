@@ -281,6 +281,64 @@ func TestRollup_EmbeddingSpanWithoutAgent(t *testing.T) {
 	}
 }
 
+// TestRollup_AccumulatorIncludesCacheCreation verifies that the accumulator's
+// trace totals include both cache read AND cache creation from the full
+// Anthropic usage shape (issue #10 acceptance criterion).
+//
+// The ephemeral split and metadata are leaf-span-only (no accumulator fields for
+// them); only CacheCreationInputTokens is rolled up (the total cache-write count).
+func TestRollup_AccumulatorIncludesCacheCreation(t *testing.T) {
+	rec := setupInMemoryProvider(t)
+
+	ctx := context.Background()
+	ctx, agentSpan, _ := amp.AgentSpan(ctx, amp.AgentInput{Name: "cache-creation-agent"})
+
+	// Simulate a real Anthropic usage response with cache creation + ephemeral split.
+	_, llm, res := amp.LLMSpan(ctx, amp.LLMInput{System: "anthropic", RequestModel: "claude-3-5-sonnet-20241022"})
+	res.Usage = usage.LLMUsage{
+		InputTokens:                         1,
+		OutputTokens:                        38,
+		CacheReadInputTokens:                6270,
+		CacheCreationInputTokens:            222,
+		CacheCreationEphemeral1hInputTokens: 0,
+		CacheCreationEphemeral5mInputTokens: 222,
+		ServiceTier:                         "standard",
+		InferenceGeo:                        "global",
+	}
+	llm.End()
+	agentSpan.End()
+
+	agentS := spanByName(rec, "invoke_agent")
+	if agentS == nil {
+		t.Fatal("invoke_agent span not found")
+	}
+	attrs := attrMap(agentS)
+
+	// Accumulator totals must include cache read and cache creation.
+	if attrs["gen_ai.usage.input_tokens"] != int64(1) {
+		t.Errorf("agent input_tokens = %v, want 1 (raw uncached)", attrs["gen_ai.usage.input_tokens"])
+	}
+	if attrs["gen_ai.usage.output_tokens"] != int64(38) {
+		t.Errorf("agent output_tokens = %v, want 38", attrs["gen_ai.usage.output_tokens"])
+	}
+	if attrs["gen_ai.usage.cache_read_input_tokens"] != int64(6270) {
+		t.Errorf("agent cache_read_input_tokens = %v, want 6270", attrs["gen_ai.usage.cache_read_input_tokens"])
+	}
+	if attrs["gen_ai.usage.cache_creation_input_tokens"] != int64(222) {
+		t.Errorf("agent cache_creation_input_tokens = %v, want 222", attrs["gen_ai.usage.cache_creation_input_tokens"])
+	}
+	// Ephemeral split and metadata are leaf-span-only — must NOT appear on agent span.
+	if _, ok := attrs["gen_ai.usage.cache_creation.ephemeral_5m_input_tokens"]; ok {
+		t.Error("ephemeral_5m_input_tokens should not be rolled up to agent span")
+	}
+	if _, ok := attrs["gen_ai.anthropic.service_tier"]; ok {
+		t.Error("service_tier should not be rolled up to agent span")
+	}
+	if _, ok := attrs["gen_ai.anthropic.inference_geo"]; ok {
+		t.Error("inference_geo should not be rolled up to agent span")
+	}
+}
+
 // TestRollup_LeafUsageStaysOnLeafSpan verifies that the roll-up is ADDITIVE —
 // per-call token attributes remain on each leaf span (OTel-correct). The agent
 // span carries the total AND each leaf span carries its own usage.

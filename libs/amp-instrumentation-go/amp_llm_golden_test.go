@@ -328,6 +328,106 @@ func TestLLMSpan_SpanKindIsClient(t *testing.T) {
 	}
 }
 
+// TestLLMSpan_FullAnthropicUsageShape verifies that a real-world Anthropic
+// usage response (including cache_creation, ephemeral split, service_tier, and
+// inference_geo) is correctly emitted on the leaf LLM span, and that
+// gen_ai.usage.input_tokens remains the raw uncached value.
+//
+// This is the top-level acceptance-criteria test for issue #10.
+func TestLLMSpan_FullAnthropicUsageShape(t *testing.T) {
+	rec := setupInMemoryProvider(t)
+
+	ctx := context.Background()
+	_, span, result := amp.LLMSpan(ctx, amp.LLMInput{
+		System:       "anthropic",
+		RequestModel: "claude-3-5-sonnet-20241022",
+	})
+	// Populate the full Anthropic usage shape from issue #10.
+	result.Usage = usage.LLMUsage{
+		InputTokens:                         1,
+		OutputTokens:                        38,
+		CacheReadInputTokens:                6270,
+		CacheCreationInputTokens:            222,
+		CacheCreationEphemeral1hInputTokens: 0,   // zero → should be omitted
+		CacheCreationEphemeral5mInputTokens: 222,
+		ServiceTier:                         "standard",
+		InferenceGeo:                        "global",
+	}
+	span.End()
+
+	s := lastSpan(t, rec)
+	attrs := attrMap(s)
+
+	// --- Raw-uncached input rule ---
+	if attrs["gen_ai.usage.input_tokens"] != int64(1) {
+		t.Errorf("input_tokens = %v, want 1 (raw uncached)", attrs["gen_ai.usage.input_tokens"])
+	}
+	// input_tokens must NOT equal cache_read (would indicate folding).
+	if attrs["gen_ai.usage.input_tokens"] == attrs["gen_ai.usage.cache_read_input_tokens"] {
+		t.Error("input_tokens must be raw uncached, not equal to cache_read_input_tokens")
+	}
+
+	// --- Standard keys ---
+	if attrs["gen_ai.usage.output_tokens"] != int64(38) {
+		t.Errorf("output_tokens = %v, want 38", attrs["gen_ai.usage.output_tokens"])
+	}
+	if attrs["gen_ai.usage.cache_read_input_tokens"] != int64(6270) {
+		t.Errorf("cache_read_input_tokens = %v, want 6270", attrs["gen_ai.usage.cache_read_input_tokens"])
+	}
+	if attrs["gen_ai.usage.cache_creation_input_tokens"] != int64(222) {
+		t.Errorf("cache_creation_input_tokens = %v, want 222", attrs["gen_ai.usage.cache_creation_input_tokens"])
+	}
+
+	// --- Ephemeral split keys (issue #10) ---
+	// 5m tier present (non-zero).
+	if attrs["gen_ai.usage.cache_creation.ephemeral_5m_input_tokens"] != int64(222) {
+		t.Errorf("ephemeral_5m_input_tokens = %v, want 222", attrs["gen_ai.usage.cache_creation.ephemeral_5m_input_tokens"])
+	}
+	// 1h tier absent (zero).
+	if _, ok := attrs["gen_ai.usage.cache_creation.ephemeral_1h_input_tokens"]; ok {
+		t.Error("ephemeral_1h_input_tokens should be absent when zero")
+	}
+
+	// --- Metadata keys (issue #10) ---
+	if attrs["gen_ai.anthropic.service_tier"] != "standard" {
+		t.Errorf("service_tier = %v, want 'standard'", attrs["gen_ai.anthropic.service_tier"])
+	}
+	if attrs["gen_ai.anthropic.inference_geo"] != "global" {
+		t.Errorf("inference_geo = %v, want 'global'", attrs["gen_ai.anthropic.inference_geo"])
+	}
+}
+
+// TestLLMSpan_ExtendedKeysAbsentWhenNotSet verifies that the new issue-#10 keys
+// (ephemeral split, service_tier, inference_geo) are NOT emitted when not set,
+// so callers that don't use Anthropic are unaffected.
+func TestLLMSpan_ExtendedKeysAbsentWhenNotSet(t *testing.T) {
+	rec := setupInMemoryProvider(t)
+
+	ctx := context.Background()
+	_, span, result := amp.LLMSpan(ctx, amp.LLMInput{
+		System:       "openai",
+		RequestModel: "gpt-4o",
+	})
+	// Minimal usage — no extended fields.
+	result.Usage = usage.LLMUsage{InputTokens: 10, OutputTokens: 5}
+	span.End()
+
+	s := lastSpan(t, rec)
+	attrs := attrMap(s)
+
+	extendedKeys := []string{
+		"gen_ai.usage.cache_creation.ephemeral_1h_input_tokens",
+		"gen_ai.usage.cache_creation.ephemeral_5m_input_tokens",
+		"gen_ai.anthropic.service_tier",
+		"gen_ai.anthropic.inference_geo",
+	}
+	for _, k := range extendedKeys {
+		if _, ok := attrs[k]; ok {
+			t.Errorf("extended key %q should be absent when not set, but was present: %v", k, attrs[k])
+		}
+	}
+}
+
 // TestLLMSpan_AttributeKeyType_Integer asserts that token usage attributes are
 // emitted as integers (not strings or floats), matching the contract spec.
 func TestLLMSpan_AttributeKeyType_Integer(t *testing.T) {

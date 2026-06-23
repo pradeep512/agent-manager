@@ -44,26 +44,44 @@ type LLMAttrs struct {
 	// OutputTokens is gen_ai.usage.output_tokens. Required by observer.
 	OutputTokens int64
 	// CacheReadInputTokens is optional; omitted when 0.
+	// Emitted as: gen_ai.usage.cache_read_input_tokens
 	CacheReadInputTokens int64
-	// CacheCreationInputTokens is optional; omitted when 0.
+	// CacheCreationInputTokens is the total cache write token count; optional; omitted when 0.
+	// Emitted as: gen_ai.usage.cache_creation_input_tokens
 	CacheCreationInputTokens int64
+	// CacheCreationEphemeral1hInputTokens is the 1h-tier subset of cache writes; optional.
+	// Emitted as: gen_ai.usage.cache_creation.ephemeral_1h_input_tokens
+	CacheCreationEphemeral1hInputTokens int64
+	// CacheCreationEphemeral5mInputTokens is the 5m-tier subset of cache writes; optional.
+	// Emitted as: gen_ai.usage.cache_creation.ephemeral_5m_input_tokens
+	CacheCreationEphemeral5mInputTokens int64
+	// ServiceTier is the Anthropic pricing tier (e.g. "standard"); optional.
+	// Emitted as: gen_ai.anthropic.service_tier
+	ServiceTier string
+	// InferenceGeo is the Anthropic inference geography (e.g. "global"); optional.
+	// Emitted as: gen_ai.anthropic.inference_geo
+	InferenceGeo string
 }
 
 // LLMAttributes returns the complete attribute set for an LLM chat span. The
 // span name must be "chat" and gen_ai.operation.name is always "chat".
 //
 // The returned slice follows the published contract order:
-//  1. gen_ai.operation.name = "chat"          (required)
-//  2. gen_ai.system                            (required)
-//  3. gen_ai.request.model                     (required)
-//  4. gen_ai.response.model                    (optional)
-//  5. gen_ai.request.temperature               (optional)
-//  6. gen_ai.input.messages                    (optional)
-//  7. gen_ai.output.messages                   (optional)
-//  8. gen_ai.usage.input_tokens                (required)
-//  9. gen_ai.usage.output_tokens               (required)
-//  10. gen_ai.usage.cache_read_input_tokens    (optional)
-//  11. gen_ai.usage.cache_creation_input_tokens (optional)
+//  1. gen_ai.operation.name = "chat"                              (required)
+//  2. gen_ai.system                                               (required)
+//  3. gen_ai.request.model                                        (required)
+//  4. gen_ai.response.model                                       (optional)
+//  5. gen_ai.request.temperature                                  (optional)
+//  6. gen_ai.input.messages                                       (optional)
+//  7. gen_ai.output.messages                                      (optional)
+//  8. gen_ai.usage.input_tokens                                   (required; raw uncached)
+//  9. gen_ai.usage.output_tokens                                  (required)
+//  10. gen_ai.usage.cache_read_input_tokens                       (optional)
+//  11. gen_ai.usage.cache_creation_input_tokens                   (optional)
+//  12. gen_ai.usage.cache_creation.ephemeral_1h_input_tokens      (optional; issue #10)
+//  13. gen_ai.usage.cache_creation.ephemeral_5m_input_tokens      (optional; issue #10)
+//  14. gen_ai.anthropic.service_tier                              (optional; issue #10)
+//  15. gen_ai.anthropic.inference_geo                             (optional; issue #10)
 func LLMAttributes(a LLMAttrs) []attribute.KeyValue {
 	attrs := []attribute.KeyValue{
 		attribute.String("gen_ai.operation.name", "chat"),
@@ -91,6 +109,20 @@ func LLMAttributes(a LLMAttrs) []attribute.KeyValue {
 	}
 	if a.CacheCreationInputTokens > 0 {
 		attrs = append(attrs, attribute.Int64("gen_ai.usage.cache_creation_input_tokens", a.CacheCreationInputTokens))
+	}
+	// Ephemeral cache-creation split (Anthropic cache_creation sub-object).
+	if a.CacheCreationEphemeral1hInputTokens > 0 {
+		attrs = append(attrs, attribute.Int64("gen_ai.usage.cache_creation.ephemeral_1h_input_tokens", a.CacheCreationEphemeral1hInputTokens))
+	}
+	if a.CacheCreationEphemeral5mInputTokens > 0 {
+		attrs = append(attrs, attribute.Int64("gen_ai.usage.cache_creation.ephemeral_5m_input_tokens", a.CacheCreationEphemeral5mInputTokens))
+	}
+	// Provider metadata (not token counts → gen_ai.anthropic.* prefix).
+	if a.ServiceTier != "" {
+		attrs = append(attrs, attribute.String("gen_ai.anthropic.service_tier", a.ServiceTier))
+	}
+	if a.InferenceGeo != "" {
+		attrs = append(attrs, attribute.String("gen_ai.anthropic.inference_geo", a.InferenceGeo))
 	}
 	return attrs
 }
