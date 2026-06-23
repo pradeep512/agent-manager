@@ -537,6 +537,78 @@ func RetrieverSpan(ctx context.Context, input RetrieverInput) (context.Context, 
 }
 
 // --------------------------------------------------------------------------
+// Rerank span
+// --------------------------------------------------------------------------
+
+// RerankInput holds the parameters for one reranking step. Model is required;
+// Query and CandidateCount are the key signals set on the span.
+//
+// Rerank is recognized as a kind only (no data card in v1). The observer keys
+// it off the Layer-2 traceloop.span.kind = "rerank" attribute. The de-facto
+// signal keys (gen_ai.operation.name, rerank.model, gen_ai.request.model, and
+// traceloop.entity.input) mirror the Python rerank_span reference exactly.
+type RerankInput struct {
+	// Model is the reranker model identifier. Required.
+	// Set as both rerank.model and gen_ai.request.model.
+	Model string
+	// Query is the text query being reranked. Redacted when AMP_TRACE_CONTENT=false.
+	Query string
+	// CandidateCount is the number of candidate documents provided to the reranker.
+	// Set inside traceloop.entity.input as "candidate_count". Optional; zero omits it.
+	CandidateCount int
+}
+
+// RerankSpan starts a reranking span, returning (ctx, span). Like RetrieverSpan
+// there is no result handle: the observer extracts no response fields from rerank
+// spans in v1, so all attributes are written at Start. The caller calls
+// span.End() when the reranking step completes.
+//
+// The span name is "rerank" and SpanKind is CLIENT (matching the Python reference).
+//
+// Attributes written at Start:
+//   - traceloop.span.kind = "rerank"   (required — sole published contract key)
+//   - gen_ai.operation.name = "rerank" (de-facto signal; observer fallback)
+//   - rerank.model                     (de-facto signal; observer fallback)
+//   - gen_ai.request.model             (same value as rerank.model)
+//   - traceloop.entity.input           (JSON: {"query":..., "candidate_count":...})
+//     Query is redacted when AMP_TRACE_CONTENT=false; candidate_count is preserved.
+func RerankSpan(ctx context.Context, input RerankInput) (context.Context, *Span) {
+	cfg := loadConfigCached()
+
+	tracer := otel.GetTracerProvider().Tracer(tracerName)
+	ctx, otelSpan := tracer.Start(ctx, "rerank", trace.WithSpanKind(trace.SpanKindClient))
+
+	// Write discriminator and de-facto signal keys at Start.
+	otelSpan.SetAttributes(
+		attribute.String("traceloop.span.kind", "rerank"),
+		attribute.String("gen_ai.operation.name", "rerank"),
+		attribute.String("rerank.model", input.Model),
+		attribute.String("gen_ai.request.model", input.Model),
+	)
+
+	// Build traceloop.entity.input carrying query (redactable) + candidate_count.
+	// Mirrors the Python reference:
+	//   span.set_attribute("traceloop.entity.input", json.dumps({
+	//       "query": _content(query), "candidate_count": candidate_count,
+	//   }))
+	entityInput := map[string]any{
+		"query":           redact.Text(input.Query, cfg.TraceContent),
+		"candidate_count": input.CandidateCount,
+	}
+	if b, err := json.Marshal(entityInput); err == nil {
+		otelSpan.SetAttributes(attribute.String("traceloop.entity.input", string(b)))
+	}
+
+	s := &Span{
+		span:         otelSpan,
+		traceContent: cfg.TraceContent,
+	}
+	// No endAttributes: all attributes are written at Start (no result handle).
+
+	return ctx, s
+}
+
+// --------------------------------------------------------------------------
 // config cache (avoid re-reading env on every span)
 // --------------------------------------------------------------------------
 
