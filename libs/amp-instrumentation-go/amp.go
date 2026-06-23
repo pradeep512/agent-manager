@@ -609,6 +609,86 @@ func RerankSpan(ctx context.Context, input RerankInput) (context.Context, *Span)
 }
 
 // --------------------------------------------------------------------------
+// Chain span
+// --------------------------------------------------------------------------
+
+// ChainInput holds the parameters for one chain / workflow step. Name is
+// required (it becomes the span name); Input is optional.
+//
+// The chain kind has no OTel gen_ai.* discriminator. The observer resolves it
+// from the Layer-2 key traceloop.span.kind = "workflow" (process.go:
+// case "task", "workflow": return SpanTypeChain).
+type ChainInput struct {
+	// Name is the workflow / pipeline step name. Required; used as the span name.
+	// Mirrors the Python chain_span(name=...) parameter.
+	Name string
+	// Input is the workflow's input payload. Optional; serialised to JSON as
+	// {"input": <value>} and stored in traceloop.entity.input. Redacted when
+	// AMP_TRACE_CONTENT=false.
+	Input any
+}
+
+// ChainResult is filled by the caller after the chain step completes.
+type ChainResult struct {
+	// Output is the chain step's result value. Optional; serialised to JSON as
+	// {"output": <value>} and stored in traceloop.entity.output at span.End().
+	// Redacted when AMP_TRACE_CONTENT=false.
+	Output any
+}
+
+// ChainSpan starts a chain / workflow span, returning (ctx, span, result). The
+// caller fills result.Output after the step completes, then calls span.End().
+//
+// This span kind is resolved by the observer purely through the Layer-2
+// traceloop.span.kind = "workflow" attribute — OTel has no standardised key for
+// the chain/workflow concept. The Python reference (instrumentation.py →
+// chain_span) is the authoritative source for this attribute set.
+//
+// Attributes written at Start:
+//   - traceloop.span.kind = "workflow"  (required — observer discriminator → chain kind)
+//   - traceloop.entity.input            (optional; present when Input is non-nil)
+//
+// Attributes written at End (from result):
+//   - traceloop.entity.output           (optional; present when result.Output is non-nil)
+func ChainSpan(ctx context.Context, input ChainInput) (context.Context, *Span, *ChainResult) {
+	cfg := loadConfigCached()
+
+	tracer := otel.GetTracerProvider().Tracer(tracerName)
+	ctx, otelSpan := tracer.Start(ctx, input.Name, trace.WithSpanKind(trace.SpanKindInternal))
+
+	// Write the Layer-2 discriminator — the observer resolves this to SpanTypeChain.
+	otelSpan.SetAttributes(attribute.String("traceloop.span.kind", "workflow"))
+
+	// Write input entity if provided. JSON envelope: {"input": <value>}.
+	// Mirrors Python: json.dumps({"input": _redact_value(workflow_input)})
+	if input.Input != nil {
+		redacted := redact.Value(input.Input, cfg.TraceContent)
+		envelope := map[string]any{"input": redacted}
+		if b, err := json.Marshal(envelope); err == nil {
+			otelSpan.SetAttributes(attribute.String("traceloop.entity.input", string(b)))
+		}
+	}
+
+	result := &ChainResult{}
+
+	s := &Span{
+		span:         otelSpan,
+		traceContent: cfg.TraceContent,
+	}
+	s.endAttributes = func() {
+		if result.Output != nil {
+			redacted := redact.Value(result.Output, s.traceContent)
+			envelope := map[string]any{"output": redacted}
+			if b, err := json.Marshal(envelope); err == nil {
+				otelSpan.SetAttributes(attribute.String("traceloop.entity.output", string(b)))
+			}
+		}
+	}
+
+	return ctx, s, result
+}
+
+// --------------------------------------------------------------------------
 // config cache (avoid re-reading env on every span)
 // --------------------------------------------------------------------------
 
