@@ -167,6 +167,16 @@ type LLMInput struct {
 	InputMessages []map[string]any
 }
 
+// LLMUsage holds token counts for one LLM call.
+//
+// It is a public re-export of the internal usage.LLMUsage type so that external
+// callers (e.g. the conformance test module) can construct usage values without
+// importing an internal package.
+//
+// InputTokens is always the raw uncached prompt-token count.
+// Cache-related fields are optional (zero value = not set = attribute omitted).
+type LLMUsage = usage.LLMUsage
+
 // LLMResult is filled by the caller after the LLM returns.
 type LLMResult struct {
 	// ResponseModel is the model that actually answered (may differ from request).
@@ -174,7 +184,7 @@ type LLMResult struct {
 	// OutputMessages are the model's response messages.
 	OutputMessages []map[string]any
 	// Usage holds the token counts for this call.
-	Usage usage.LLMUsage
+	Usage LLMUsage
 }
 
 // Span is a handle to an in-flight AMP span. The caller fills a result object
