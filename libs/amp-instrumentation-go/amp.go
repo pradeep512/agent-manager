@@ -215,6 +215,119 @@ func LLMSpan(ctx context.Context, input LLMInput) (context.Context, *Span, *LLMR
 }
 
 // --------------------------------------------------------------------------
+// Agent span
+// --------------------------------------------------------------------------
+
+// AgentInput holds the parameters for one agent root invocation. Required field
+// is Name; all others are optional.
+type AgentInput struct {
+	// Name is the agent name (gen_ai.agent.name). Required.
+	Name string
+	// Description is the agent's human-readable description
+	// (gen_ai.agent.description). Optional.
+	Description string
+	// Framework is the AI framework / vendor (gen_ai.system, shown as the
+	// framework chip in the console). Optional.
+	Framework string
+	// RequestModel is the model the agent uses (gen_ai.request.model). Optional.
+	RequestModel string
+	// SystemInstructions is the system prompt text
+	// (gen_ai.system_instructions). Optional; redacted when AMP_TRACE_CONTENT=false.
+	SystemInstructions string
+	// ConversationID is the conversation / session identifier
+	// (gen_ai.conversation.id). Optional.
+	ConversationID string
+	// Tools is the list of tools available to the agent. Optional; serialised to
+	// JSON and stored in gen_ai.agent.tools.
+	Tools []map[string]any
+	// InputMessages is the list of messages that initiated this invocation.
+	// Optional; serialised to JSON with redaction applied.
+	InputMessages []map[string]any
+}
+
+// AgentResult is filled by the caller after the agent invocation completes.
+type AgentResult struct {
+	// OutputMessages are the messages produced by the agent in response.
+	// Optional; serialised to JSON with redaction applied at End().
+	OutputMessages []map[string]any
+	// InputTokens is the number of input tokens consumed by this invocation.
+	// Callers set this directly (token roll-up is issue #8).
+	InputTokens int64
+	// OutputTokens is the number of output tokens produced by this invocation.
+	// Callers set this directly (token roll-up is issue #8).
+	OutputTokens int64
+}
+
+// AgentSpan starts a root agent invocation span, returning (ctx, span, result).
+// The caller fills result after the agent completes, then calls span.End().
+//
+// Attributes written at Start:
+//   - gen_ai.operation.name = "invoke_agent"
+//   - gen_ai.agent.name
+//   - gen_ai.agent.description (if set)
+//   - gen_ai.system (if Framework set)
+//   - gen_ai.request.model (if set)
+//   - gen_ai.system_instructions (if set; redacted when AMP_TRACE_CONTENT=false)
+//   - gen_ai.conversation.id (if set)
+//   - gen_ai.agent.tools (if Tools set)
+//   - gen_ai.input.messages (if InputMessages set)
+//
+// Attributes written at End (from result):
+//   - gen_ai.output.messages (if set)
+func AgentSpan(ctx context.Context, input AgentInput) (context.Context, *Span, *AgentResult) {
+	cfg := loadConfigCached()
+
+	tracer := otel.GetTracerProvider().Tracer(tracerName)
+	ctx, otelSpan := tracer.Start(ctx, "invoke_agent", trace.WithSpanKind(trace.SpanKindInternal))
+
+	// Write start-time attributes.
+	otelSpan.SetAttributes(
+		attribute.String("gen_ai.operation.name", "invoke_agent"),
+		attribute.String("gen_ai.agent.name", input.Name),
+	)
+	if input.Description != "" {
+		otelSpan.SetAttributes(attribute.String("gen_ai.agent.description", input.Description))
+	}
+	if input.Framework != "" {
+		otelSpan.SetAttributes(attribute.String("gen_ai.system", input.Framework))
+	}
+	if input.RequestModel != "" {
+		otelSpan.SetAttributes(attribute.String("gen_ai.request.model", input.RequestModel))
+	}
+	if input.SystemInstructions != "" {
+		otelSpan.SetAttributes(attribute.String("gen_ai.system_instructions",
+			redact.Text(input.SystemInstructions, cfg.TraceContent)))
+	}
+	if input.ConversationID != "" {
+		otelSpan.SetAttributes(attribute.String("gen_ai.conversation.id", input.ConversationID))
+	}
+	if len(input.Tools) > 0 {
+		if b, err := json.Marshal(input.Tools); err == nil {
+			otelSpan.SetAttributes(attribute.String("gen_ai.agent.tools", string(b)))
+		}
+	}
+	if len(input.InputMessages) > 0 {
+		otelSpan.SetAttributes(attribute.String("gen_ai.input.messages",
+			redact.Messages(input.InputMessages, cfg.TraceContent)))
+	}
+
+	result := &AgentResult{}
+
+	s := &Span{
+		span:         otelSpan,
+		traceContent: cfg.TraceContent,
+	}
+	s.endAttributes = func() {
+		if len(result.OutputMessages) > 0 {
+			otelSpan.SetAttributes(attribute.String("gen_ai.output.messages",
+				redact.Messages(result.OutputMessages, s.traceContent)))
+		}
+	}
+
+	return ctx, s, result
+}
+
+// --------------------------------------------------------------------------
 // Tool span
 // --------------------------------------------------------------------------
 
