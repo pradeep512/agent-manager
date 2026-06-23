@@ -480,6 +480,63 @@ func EmbeddingSpan(ctx context.Context, input EmbeddingInput) (context.Context, 
 }
 
 // --------------------------------------------------------------------------
+// Retriever span
+// --------------------------------------------------------------------------
+
+// RetrieverInput holds the parameters for one vector-DB retrieval. Required
+// field is VectorDB; all others are optional.
+//
+// This span uses OTel database semantic conventions (db.*), not gen_ai.*.
+// The observer resolves it to the "retriever" kind by keying off
+// db.system.name being a known vector-DB system name.
+//
+// Retrieved documents are not extracted by the observer in v1 and are
+// therefore not modelled here. There is no free-form text content in this
+// span; no redaction is applied (matching the Python retriever_span reference).
+type RetrieverInput struct {
+	// VectorDB is the vector database system name (db.system.name). Required.
+	// Must be a value recognised by the observer as a vector DB, e.g.
+	// "pinecone", "weaviate", "qdrant", "milvus", "chroma", "chromadb",
+	// "pgvector".
+	VectorDB string
+	// Collection is the collection / index name (db.collection.name). Optional.
+	Collection string
+	// TopK is the number of nearest neighbours requested
+	// (db.vector.query.top_k). Optional; zero value omits the attribute.
+	TopK int64
+}
+
+// RetrieverSpan starts a vector-DB retrieval span, returning (ctx, span). Unlike
+// LLMSpan/EmbeddingSpan there is no result handle: the observer extracts no
+// response fields from retriever spans in v1, so all attributes are written at
+// Start. The caller calls span.End() when the retrieval completes.
+//
+// Attributes written at Start:
+//   - db.system.name   (required — observer discriminator for retriever kind)
+//   - db.collection.name (if set)
+//   - db.vector.query.top_k (if non-zero)
+func RetrieverSpan(ctx context.Context, input RetrieverInput) (context.Context, *Span) {
+	tracer := otel.GetTracerProvider().Tracer(tracerName)
+	ctx, otelSpan := tracer.Start(ctx, "vector_search", trace.WithSpanKind(trace.SpanKindClient))
+
+	// db.system.name is required — it is the observer's discriminator.
+	otelSpan.SetAttributes(attribute.String("db.system.name", input.VectorDB))
+	if input.Collection != "" {
+		otelSpan.SetAttributes(attribute.String("db.collection.name", input.Collection))
+	}
+	if input.TopK > 0 {
+		otelSpan.SetAttributes(attribute.Int64("db.vector.query.top_k", input.TopK))
+	}
+
+	s := &Span{
+		span: otelSpan,
+	}
+	// No endAttributes: all attributes are written at Start.
+
+	return ctx, s
+}
+
+// --------------------------------------------------------------------------
 // config cache (avoid re-reading env on every span)
 // --------------------------------------------------------------------------
 
