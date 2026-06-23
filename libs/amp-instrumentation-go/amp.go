@@ -52,6 +52,7 @@ package amp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -402,6 +403,77 @@ func ToolSpan(ctx context.Context, input ToolInput) (context.Context, *Span, *To
 				otelSpan.SetAttributes(attribute.String("traceloop.entity.output", string(b)))
 			}
 		}
+	}
+
+	return ctx, s, result
+}
+
+// --------------------------------------------------------------------------
+// Embedding span
+// --------------------------------------------------------------------------
+
+// EmbeddingInput holds the parameters for one embedding call. Required fields
+// are System and RequestModel; Texts is the list of strings to embed.
+type EmbeddingInput struct {
+	// System is the AI provider / vendor (e.g. "voyage", "openai").
+	System string
+	// RequestModel is the model identifier requested by the caller.
+	RequestModel string
+	// Texts are the strings being embedded. Each is recorded as
+	// gen_ai.prompt.{i}.content. Redacted when AMP_TRACE_CONTENT=false.
+	Texts []string
+}
+
+// EmbeddingResult is filled by the caller after the embedding call returns.
+type EmbeddingResult struct {
+	// ResponseModel is the model that actually answered (may differ from request).
+	ResponseModel string
+	// InputTokens is gen_ai.usage.input_tokens for this embedding call.
+	InputTokens int64
+}
+
+// EmbeddingSpan starts an embedding span, returning (ctx, span, result). The
+// caller fills result after the embedding call returns, then calls span.End().
+//
+// Attributes written at Start:
+//   - gen_ai.operation.name = "embeddings"   (observer discriminator — resolves to embedding kind)
+//   - gen_ai.system
+//   - gen_ai.request.model
+//   - gen_ai.prompt.{i}.content for each input text (redacted when AMP_TRACE_CONTENT=false)
+//
+// Attributes written at End (from result):
+//   - gen_ai.response.model (if set)
+//   - gen_ai.usage.input_tokens
+func EmbeddingSpan(ctx context.Context, input EmbeddingInput) (context.Context, *Span, *EmbeddingResult) {
+	cfg := loadConfigCached()
+
+	tracer := otel.GetTracerProvider().Tracer(tracerName)
+	ctx, otelSpan := tracer.Start(ctx, "embeddings", trace.WithSpanKind(trace.SpanKindClient))
+
+	// Write start-time attributes.
+	otelSpan.SetAttributes(
+		attribute.String("gen_ai.operation.name", "embeddings"),
+		attribute.String("gen_ai.system", input.System),
+		attribute.String("gen_ai.request.model", input.RequestModel),
+	)
+	for i, text := range input.Texts {
+		otelSpan.SetAttributes(attribute.String(
+			fmt.Sprintf("gen_ai.prompt.%d.content", i),
+			redact.Text(text, cfg.TraceContent),
+		))
+	}
+
+	result := &EmbeddingResult{}
+
+	s := &Span{
+		span:         otelSpan,
+		traceContent: cfg.TraceContent,
+	}
+	s.endAttributes = func() {
+		if result.ResponseModel != "" {
+			otelSpan.SetAttributes(attribute.String("gen_ai.response.model", result.ResponseModel))
+		}
+		otelSpan.SetAttributes(attribute.Int64("gen_ai.usage.input_tokens", result.InputTokens))
 	}
 
 	return ctx, s, result
