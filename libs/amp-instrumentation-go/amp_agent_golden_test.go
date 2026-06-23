@@ -59,8 +59,8 @@ func TestAgentSpan_GoldenContractKeys(t *testing.T) {
 		InputMessages:      []map[string]any{{"role": "user", "content": "What is Go?"}},
 	})
 	result.OutputMessages = []map[string]any{{"role": "assistant", "content": "Go is a language."}}
-	result.InputTokens = 20
-	result.OutputTokens = 10
+	// Token totals are now accumulated automatically from child spans (ADR 0001).
+	// No manual assignment needed here.
 	span.End()
 	_ = ctx
 

@@ -59,6 +59,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/wso2/agent-manager/libs/amp-instrumentation-go/internal/accumulator"
 	"github.com/wso2/agent-manager/libs/amp-instrumentation-go/internal/config"
 	"github.com/wso2/agent-manager/libs/amp-instrumentation-go/internal/exporter"
 	"github.com/wso2/agent-manager/libs/amp-instrumentation-go/internal/redact"
@@ -186,6 +187,10 @@ func LLMSpan(ctx context.Context, input LLMInput) (context.Context, *Span, *LLMR
 
 	result := &LLMResult{}
 
+	// Capture the accumulator from ctx at span-start time. If there is no
+	// enclosing AgentSpan the accumulator will be nil and Add is a no-op.
+	acc := accumulator.FromContext(ctx)
+
 	s := &Span{
 		span:         otelSpan,
 		result:       result,
@@ -209,6 +214,16 @@ func LLMSpan(ctx context.Context, input LLMInput) (context.Context, *Span, *LLMR
 		}
 		if result.Usage.CacheCreationInputTokens > 0 {
 			otelSpan.SetAttributes(attribute.Int64("gen_ai.usage.cache_creation_input_tokens", result.Usage.CacheCreationInputTokens))
+		}
+		// Roll up this call's usage into the nearest ancestor agent span.
+		// Safe when acc is nil (LLMSpan used without an enclosing AgentSpan).
+		if acc != nil {
+			acc.Add(
+				result.Usage.InputTokens,
+				result.Usage.OutputTokens,
+				result.Usage.CacheReadInputTokens,
+				result.Usage.CacheCreationInputTokens,
+			)
 		}
 	}
 
@@ -251,12 +266,6 @@ type AgentResult struct {
 	// OutputMessages are the messages produced by the agent in response.
 	// Optional; serialised to JSON with redaction applied at End().
 	OutputMessages []map[string]any
-	// InputTokens is the number of input tokens consumed by this invocation.
-	// Callers set this directly (token roll-up is issue #8).
-	InputTokens int64
-	// OutputTokens is the number of output tokens produced by this invocation.
-	// Callers set this directly (token roll-up is issue #8).
-	OutputTokens int64
 }
 
 // AgentSpan starts a root agent invocation span, returning (ctx, span, result).
@@ -314,6 +323,11 @@ func AgentSpan(ctx context.Context, input AgentInput) (context.Context, *Span, *
 
 	result := &AgentResult{}
 
+	// Install a fresh accumulator into the context so that all descendant leaf
+	// spans (LLMSpan, EmbeddingSpan) can roll their token usage up to this span.
+	acc := &accumulator.Accumulator{}
+	ctx = accumulator.NewContext(ctx, acc)
+
 	s := &Span{
 		span:         otelSpan,
 		traceContent: cfg.TraceContent,
@@ -322,6 +336,20 @@ func AgentSpan(ctx context.Context, input AgentInput) (context.Context, *Span, *
 		if len(result.OutputMessages) > 0 {
 			otelSpan.SetAttributes(attribute.String("gen_ai.output.messages",
 				redact.Messages(result.OutputMessages, s.traceContent)))
+		}
+		// Read accumulated token totals from all child spans that ended before
+		// this agent span ends. Children that end AFTER this point are not
+		// counted (documented limit; see ADR 0001).
+		totals := acc.Load()
+		otelSpan.SetAttributes(
+			attribute.Int64("gen_ai.usage.input_tokens", totals.InputTokens),
+			attribute.Int64("gen_ai.usage.output_tokens", totals.OutputTokens),
+		)
+		if totals.CacheReadInputTokens > 0 {
+			otelSpan.SetAttributes(attribute.Int64("gen_ai.usage.cache_read_input_tokens", totals.CacheReadInputTokens))
+		}
+		if totals.CacheCreationInputTokens > 0 {
+			otelSpan.SetAttributes(attribute.Int64("gen_ai.usage.cache_creation_input_tokens", totals.CacheCreationInputTokens))
 		}
 	}
 
@@ -465,6 +493,10 @@ func EmbeddingSpan(ctx context.Context, input EmbeddingInput) (context.Context, 
 
 	result := &EmbeddingResult{}
 
+	// Capture the accumulator from ctx at span-start time so that this
+	// embedding call's input tokens are rolled up to the nearest agent span.
+	acc := accumulator.FromContext(ctx)
+
 	s := &Span{
 		span:         otelSpan,
 		traceContent: cfg.TraceContent,
@@ -474,6 +506,11 @@ func EmbeddingSpan(ctx context.Context, input EmbeddingInput) (context.Context, 
 			otelSpan.SetAttributes(attribute.String("gen_ai.response.model", result.ResponseModel))
 		}
 		otelSpan.SetAttributes(attribute.Int64("gen_ai.usage.input_tokens", result.InputTokens))
+		// Roll up embedding input tokens; embeddings have no output tokens.
+		// Safe when acc is nil (EmbeddingSpan used without an enclosing AgentSpan).
+		if acc != nil {
+			acc.Add(result.InputTokens, 0, 0, 0)
+		}
 	}
 
 	return ctx, s, result
