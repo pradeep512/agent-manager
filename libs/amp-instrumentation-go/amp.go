@@ -56,6 +56,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
@@ -67,6 +68,65 @@ import (
 )
 
 const tracerName = "amp-instrumentation-go"
+
+// Baggage key names used for evaluation correlation. These are the keys stored
+// in W3C baggage; they mirror the Python reference (evaluation_baggage in
+// instrumentation.py). AgentSpan copies these values to span attributes using
+// the dotted keys that the observer reads (task.id / trial.id).
+const (
+	baggageKeyTaskID  = "task_id"
+	baggageKeyTrialID = "trial_id"
+)
+
+// --------------------------------------------------------------------------
+// Evaluation correlation
+// --------------------------------------------------------------------------
+
+// WithEvaluation attaches task.id and trial.id to the context via OpenTelemetry
+// baggage so they propagate to the root agent span and are read by the Agent
+// Manager evaluation pipeline.
+//
+// The observer (traces-observer-service/controllers/controller.go) reads
+// rootSpan.Attributes["task.id"] and rootSpan.Attributes["trial.id"]; AgentSpan
+// copies the baggage values to those exact span attribute keys when present.
+//
+// Empty taskID or trialID values are silently ignored — no attribute is set.
+// It is safe to call this with both values empty; it returns the original context
+// unchanged.
+//
+// Typical usage:
+//
+//	ctx = amp.WithEvaluation(ctx, taskID, trialID)
+//	ctx, span, result := amp.AgentSpan(ctx, amp.AgentInput{Name: "my-agent"})
+//	defer span.End()
+func WithEvaluation(ctx context.Context, taskID, trialID string) context.Context {
+	if taskID == "" || trialID == "" {
+		// Neither attribute is set when either value is absent (graceful rule).
+		return ctx
+	}
+
+	bag := baggage.FromContext(ctx)
+
+	taskMember, err := baggage.NewMember(baggageKeyTaskID, taskID)
+	if err != nil {
+		return ctx
+	}
+	bag, err = bag.SetMember(taskMember)
+	if err != nil {
+		return ctx
+	}
+
+	trialMember, err := baggage.NewMember(baggageKeyTrialID, trialID)
+	if err != nil {
+		return ctx
+	}
+	bag, err = bag.SetMember(trialMember)
+	if err != nil {
+		return ctx
+	}
+
+	return baggage.ContextWithBaggage(ctx, bag)
+}
 
 // Init configures the global OTel tracer provider to export spans to AMP.
 //
@@ -314,6 +374,23 @@ func AgentSpan(ctx context.Context, input AgentInput) (context.Context, *Span, *
 	if len(input.InputMessages) > 0 {
 		otelSpan.SetAttributes(attribute.String("gen_ai.input.messages",
 			redact.Messages(input.InputMessages, cfg.TraceContent)))
+	}
+
+	// Bridge evaluation baggage → span attributes so the observer can read them.
+	// The controller reads rootSpan.Attributes["task.id"] and ["trial.id"]
+	// (controller.go:676-681). OTel baggage does not automatically surface as
+	// span attributes, so we copy them explicitly here on the root agent span.
+	// Both must be non-empty (WithEvaluation's invariant) so we only write when
+	// both are present.
+	if bag := baggage.FromContext(ctx); bag.Len() > 0 {
+		taskID := bag.Member(baggageKeyTaskID).Value()
+		trialID := bag.Member(baggageKeyTrialID).Value()
+		if taskID != "" && trialID != "" {
+			otelSpan.SetAttributes(
+				attribute.String("task.id", taskID),
+				attribute.String("trial.id", trialID),
+			)
+		}
 	}
 
 	result := &AgentResult{}
