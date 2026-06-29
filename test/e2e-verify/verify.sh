@@ -45,8 +45,19 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-PROBE="go run ./cmd/opensearch-probe"
-RECON="go run ./cmd/reconciler"
+# Build the tools to real binaries and invoke those directly. We must NOT use
+# `go run` here: `go run` collapses any non-zero child exit code to 1, which would
+# turn the probe's INCONCLUSIVE signal (exit 2) into a FAIL (exit 1) — silently
+# breaking the gate short-circuit on the live path. Direct binaries preserve 0/2/1.
+BIN_DIR="$(mktemp -d)"
+trap 'rm -rf "$BIN_DIR"' EXIT
+if ! go build -o "$BIN_DIR/opensearch-probe" ./cmd/opensearch-probe \
+    || ! go build -o "$BIN_DIR/reconciler" ./cmd/reconciler; then
+    echo "ERROR: failed to build harness binaries" >&2
+    exit 1
+fi
+PROBE="$BIN_DIR/opensearch-probe"
+RECON="$BIN_DIR/reconciler"
 
 say() { printf '\n=== %s ===\n' "$*"; }
 
