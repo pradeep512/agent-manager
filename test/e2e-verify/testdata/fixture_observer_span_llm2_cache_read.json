@@ -1,0 +1,60 @@
+{
+    "traceId": "f1bd855ecaa15fcc2ce1e2e9d32e88c5",
+    "spanId": "a81d56ae8c71761e",
+    "parentSpanId": "311a269b0d47326d",
+    "name": "chat",
+    "service": "",
+    "startTime": "2026-06-29T11:23:24.007566Z",
+    "endTime": "2026-06-29T11:23:24.007573417Z",
+    "durationInNanos": 7417,
+    "status": "unset",
+    "attributes": {
+        "data_stream": "map[dataset:default namespace:namespace type:span]",
+        "gen_ai.input.messages": "[{\"content\":\"Context:\\n- Manual instrumentation: Agents on a framework the Traceloop SDK does not cover emit their own OpenTelemetry GenAI spans against AMP's published contract.\\n- Prompt Caching: Anthropic prompt caching reduces cost and latency for agents that reuse large system prompts or context blocks. AMP captures cache_creation and cache_read token counts on each LLM span.\\n- What AMP Is: WSO2 Agent Manager is a platform to run, govern, observe, and evaluate AI agents at scale.\\n\\nQuestion: How does AMP handle observability and what token tracking does it support?\",\"role\":\"user\"},{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"toolu_18bd897e\",\"input\":{\"text\":\"- Manual instrumentation: Agents on a framework the Traceloop SDK does not cover emit their own OpenTelemetry GenAI spans against AMP's published contract.\\n- Prompt Caching: Anthropic prompt caching reduces cost and latency for agents that reuse large system prompts or context blocks. AMP captures cache_creation and cache_read token counts on each LLM span.\\n- What AMP Is: WSO2 Agent Manager is a platform to run, govern, observe, and evaluate AI agents at scale.\"},\"name\":\"word_count\"}]},{\"content\":\"{\\\"word_count\\\":74}\",\"role\":\"tool\",\"tool_id\":\"toolu_18bd897e\"}]",
+        "gen_ai.operation.name": "chat",
+        "gen_ai.output.messages": "[{\"content\":\"Based on the retrieved context, WSO2 Agent Manager (AMP) is a platform for running, governing, observing, and evaluating AI agents at scale. It supports both auto-instrumentation (for Python agents) and manual instrumentation (for Go, Ballerina, and custom frameworks). AMP captures every agent interaction as OpenTelemetry traces with full token-usage breakdowns including prompt caching costs. The context contains 74 words.\",\"role\":\"assistant\"}]",
+        "gen_ai.request.model": "claude-3-5-haiku-20241022",
+        "gen_ai.request.temperature": "0.3",
+        "gen_ai.response.model": "claude-3-5-haiku-20241022",
+        "gen_ai.system": "anthropic",
+        "gen_ai.usage.cache_read_input_tokens": "1800",
+        "gen_ai.usage.input_tokens": "368",
+        "gen_ai.usage.output_tokens": "95"
+    },
+    "ampAttributes": {
+        "kind": "llm",
+        "input": [
+            {
+                "role": "user",
+                "content": "Context:\n- Manual instrumentation: Agents on a framework the Traceloop SDK does not cover emit their own OpenTelemetry GenAI spans against AMP's published contract.\n- Prompt Caching: Anthropic prompt caching reduces cost and latency for agents that reuse large system prompts or context blocks. AMP captures cache_creation and cache_read token counts on each LLM span.\n- What AMP Is: WSO2 Agent Manager is a platform to run, govern, observe, and evaluate AI agents at scale.\n\nQuestion: How does AMP handle observability and what token tracking does it support?"
+            },
+            {
+                "role": "assistant"
+            },
+            {
+                "role": "tool",
+                "content": "{\"word_count\":74}"
+            }
+        ],
+        "output": [
+            {
+                "role": "assistant",
+                "content": "Based on the retrieved context, WSO2 Agent Manager (AMP) is a platform for running, governing, observing, and evaluating AI agents at scale. It supports both auto-instrumentation (for Python agents) and manual instrumentation (for Go, Ballerina, and custom frameworks). AMP captures every agent interaction as OpenTelemetry traces with full token-usage breakdowns including prompt caching costs. The context contains 74 words."
+            }
+        ],
+        "status": {
+            "error": false
+        },
+        "data": {
+            "model": "claude-3-5-haiku-20241022",
+            "vendor": "anthropic",
+            "temperature": 0.3,
+            "tokenUsage": {
+                "inputTokens": 368,
+                "outputTokens": 95,
+                "cacheReadInputTokens": 1800,
+                "totalTokens": 463
+            }
+        }
+    }
+}

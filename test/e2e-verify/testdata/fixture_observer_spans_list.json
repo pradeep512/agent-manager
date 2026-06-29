@@ -1,0 +1,76 @@
+{
+    "spans": [
+        {
+            "spanId": "d8c5634722db2e9d",
+            "spanName": "invoke_agent",
+            "spanKind": "agent",
+            "startTime": "2026-06-29T11:23:24.007468Z",
+            "endTime": "2026-06-29T11:23:24.007577875Z",
+            "durationNs": 109875
+        },
+        {
+            "spanId": "4e896960fbc3aa58",
+            "spanName": "rag-pipeline",
+            "spanKind": "unknown",
+            "parentSpanId": "d8c5634722db2e9d",
+            "startTime": "2026-06-29T11:23:24.007487Z",
+            "endTime": "2026-06-29T11:23:24.007576375Z",
+            "durationNs": 89375
+        },
+        {
+            "spanId": "4ad0ce375c2c240e",
+            "spanName": "embeddings",
+            "spanKind": "embedding",
+            "parentSpanId": "4e896960fbc3aa58",
+            "startTime": "2026-06-29T11:23:24.007489Z",
+            "endTime": "2026-06-29T11:23:24.007521125Z",
+            "durationNs": 32125
+        },
+        {
+            "spanId": "61d49efd4f89943a",
+            "spanName": "vector_search",
+            "spanKind": "unknown",
+            "parentSpanId": "4ad0ce375c2c240e",
+            "startTime": "2026-06-29T11:23:24.007524Z",
+            "endTime": "2026-06-29T11:23:24.007524875Z",
+            "durationNs": 875
+        },
+        {
+            "spanId": "fbb0c9861082d33f",
+            "spanName": "rerank",
+            "spanKind": "rerank",
+            "parentSpanId": "61d49efd4f89943a",
+            "startTime": "2026-06-29T11:23:24.007526Z",
+            "endTime": "2026-06-29T11:23:24.007543792Z",
+            "durationNs": 17792
+        },
+        {
+            "spanId": "771988bfb887b1e5",
+            "spanName": "chat",
+            "spanKind": "llm",
+            "parentSpanId": "fbb0c9861082d33f",
+            "startTime": "2026-06-29T11:23:24.007549Z",
+            "endTime": "2026-06-29T11:23:24.007558708Z",
+            "durationNs": 9708
+        },
+        {
+            "spanId": "311a269b0d47326d",
+            "spanName": "execute_tool",
+            "spanKind": "tool",
+            "parentSpanId": "771988bfb887b1e5",
+            "startTime": "2026-06-29T11:23:24.00756Z",
+            "endTime": "2026-06-29T11:23:24.00756325Z",
+            "durationNs": 3250
+        },
+        {
+            "spanId": "a81d56ae8c71761e",
+            "spanName": "chat",
+            "spanKind": "llm",
+            "parentSpanId": "311a269b0d47326d",
+            "startTime": "2026-06-29T11:23:24.007566Z",
+            "endTime": "2026-06-29T11:23:24.007573417Z",
+            "durationNs": 7417
+        }
+    ],
+    "totalCount": 8
+}

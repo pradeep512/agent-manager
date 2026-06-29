@@ -1,0 +1,27 @@
+{
+    "traces": [
+        {
+            "traceId": "f1bd855ecaa15fcc2ce1e2e9d32e88c5",
+            "rootSpanId": "d8c5634722db2e9d",
+            "rootSpanName": "invoke_agent",
+            "rootSpanKind": "agent",
+            "startTime": "2026-06-29T11:23:24.007468Z",
+            "endTime": "2026-06-29T11:23:24.007577875Z",
+            "durationInNanos": 109875,
+            "spanCount": 8,
+            "tokenUsage": {
+                "inputTokens": 704,
+                "outputTokens": 123,
+                "cacheReadInputTokens": 1800,
+                "cacheCreationInputTokens": 1800,
+                "totalTokens": 4427
+            },
+            "status": {
+                "errorCount": 0
+            },
+            "input": "{\"input\":\"How does AMP handle observability and what token tracking does it support?\"}",
+            "output": "{\"output\":\"Based on the retrieved context, WSO2 Agent Manager (AMP) is a platform for running, governing, observing, and evaluating AI agents at scale. It supports both auto-instrumentation (for Python agents) and manual instrumentation (for Go, Ballerina, and custom frameworks). AMP captures every agent interaction as OpenTelemetry traces with full token-usage breakdowns including prompt caching costs. The context contains 74 words.\"}"
+        }
+    ],
+    "totalCount": 1
+}
