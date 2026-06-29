@@ -547,7 +547,7 @@ func extractVendor(attrs map[string]interface{}) string {
 // Supports both standard gen_ai.usage.* and legacy prompt_tokens/completion_tokens attributes
 // Handles int, float64, and string types for token values
 func extractTokenUsageFromAttributes(attrs map[string]interface{}) *LLMTokenUsage {
-	var inputTokensRaw, outputTokensRaw, cacheReadTokensRaw interface{}
+	var inputTokensRaw, outputTokensRaw, cacheReadTokensRaw, cacheCreationTokensRaw interface{}
 
 	// Extract input tokens (gen_ai.usage.input_tokens or gen_ai.usage.prompt_tokens)
 	if val, ok := attrs["gen_ai.usage.input_tokens"]; ok {
@@ -568,10 +568,17 @@ func extractTokenUsageFromAttributes(attrs map[string]interface{}) *LLMTokenUsag
 		cacheReadTokensRaw = val
 	}
 
+	// Extract cache creation (write) tokens. Anthropic prompt caching reports
+	// these separately from input_tokens (raw uncached) and cache_read.
+	if val, ok := attrs["gen_ai.usage.cache_creation_input_tokens"]; ok {
+		cacheCreationTokensRaw = val
+	}
+
 	// Convert all raw values to integers
 	inputTokens, inputOk := extractIntValue(inputTokensRaw)
 	outputTokens, outputOk := extractIntValue(outputTokensRaw)
-	cacheReadTokens, cacheOk := extractIntValue(cacheReadTokensRaw)
+	cacheReadTokens, cacheReadOk := extractIntValue(cacheReadTokensRaw)
+	cacheCreationTokens, cacheCreationOk := extractIntValue(cacheCreationTokensRaw)
 
 	// Only return token usage if we found some tokens
 	if (inputOk && inputTokens > 0) || (outputOk && outputTokens > 0) {
@@ -581,9 +588,12 @@ func extractTokenUsageFromAttributes(attrs map[string]interface{}) *LLMTokenUsag
 			TotalTokens:  inputTokens + outputTokens,
 		}
 
-		// Only include cache read tokens if successfully extracted
-		if cacheOk && cacheReadTokens > 0 {
+		// Only include cache tokens if successfully extracted
+		if cacheReadOk && cacheReadTokens > 0 {
 			tokenUsage.CacheReadInputTokens = cacheReadTokens
+		}
+		if cacheCreationOk && cacheCreationTokens > 0 {
+			tokenUsage.CacheCreationInputTokens = cacheCreationTokens
 		}
 
 		return tokenUsage
@@ -592,9 +602,12 @@ func extractTokenUsageFromAttributes(attrs map[string]interface{}) *LLMTokenUsag
 	return nil
 }
 
-// ExtractTokenUsage aggregates token usage from GenAI spans in a trace
+// ExtractTokenUsage aggregates token usage from GenAI spans in a trace.
+// The trace-level total includes cache read + creation tokens (unlike the
+// per-span TotalTokens), so the displayed figure reflects real token volume
+// under prompt caching — see ADR 0001.
 func ExtractTokenUsage(spans []Span) *TokenUsage {
-	var inputTokens, outputTokens int
+	var inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens int
 
 	for _, span := range spans {
 		// Check if this is a GenAI span by looking for gen_ai.* attributes
@@ -603,6 +616,8 @@ func ExtractTokenUsage(spans []Span) *TokenUsage {
 			if usage := extractTokenUsageFromAttributes(span.Attributes); usage != nil {
 				inputTokens += usage.InputTokens
 				outputTokens += usage.OutputTokens
+				cacheReadTokens += usage.CacheReadInputTokens
+				cacheCreationTokens += usage.CacheCreationInputTokens
 			}
 		}
 	}
@@ -610,9 +625,11 @@ func ExtractTokenUsage(spans []Span) *TokenUsage {
 	// Only return token usage if we found some tokens
 	if inputTokens > 0 || outputTokens > 0 {
 		return &TokenUsage{
-			InputTokens:  inputTokens,
-			OutputTokens: outputTokens,
-			TotalTokens:  inputTokens + outputTokens,
+			InputTokens:              inputTokens,
+			OutputTokens:             outputTokens,
+			CacheReadInputTokens:     cacheReadTokens,
+			CacheCreationInputTokens: cacheCreationTokens,
+			TotalTokens:              inputTokens + outputTokens + cacheReadTokens + cacheCreationTokens,
 		}
 	}
 

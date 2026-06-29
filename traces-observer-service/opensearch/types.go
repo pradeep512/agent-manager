@@ -120,12 +120,16 @@ type SpanStatus struct {
 	ErrorType string `json:"errorType,omitempty"` // Error type from error.type attribute (only if error is true)
 }
 
-// LLMTokenUsage represents token usage for a single LLM span
+// LLMTokenUsage represents token usage for a single LLM span.
+// InputTokens is the raw, uncached prompt tokens; cache read/creation are
+// surfaced separately and are NOT folded into TotalTokens (which stays
+// InputTokens + OutputTokens), so per-span cost components stay distinguishable.
 type LLMTokenUsage struct {
-	InputTokens          int `json:"inputTokens"`
-	OutputTokens         int `json:"outputTokens"`
-	CacheReadInputTokens int `json:"cacheReadInputTokens,omitempty"`
-	TotalTokens          int `json:"totalTokens"`
+	InputTokens              int `json:"inputTokens"`
+	OutputTokens             int `json:"outputTokens"`
+	CacheReadInputTokens     int `json:"cacheReadInputTokens,omitempty"`
+	CacheCreationInputTokens int `json:"cacheCreationInputTokens,omitempty"`
+	TotalTokens              int `json:"totalTokens"`
 }
 
 // PromptMessage represents a single message in a conversation
@@ -206,11 +210,18 @@ const (
 // Partial is true when the aggregation was truncated (e.g. trace had more
 // LLM leaf spans than the trace-list view fetches), so consumers know to
 // render the count with a "+" / "approximate" indicator.
+//
+// Unlike the per-span LLMTokenUsage, the trace-level TotalTokens DOES include
+// cache read + creation, so the displayed total reflects real token volume
+// (and therefore cost) under prompt caching. CacheReadInputTokens and
+// CacheCreationInputTokens are also surfaced for breakdown rendering.
 type TokenUsage struct {
-	InputTokens  int  `json:"inputTokens"`
-	OutputTokens int  `json:"outputTokens"`
-	TotalTokens  int  `json:"totalTokens"`
-	Partial      bool `json:"partial,omitempty"`
+	InputTokens              int  `json:"inputTokens"`
+	OutputTokens             int  `json:"outputTokens"`
+	CacheReadInputTokens     int  `json:"cacheReadInputTokens,omitempty"`
+	CacheCreationInputTokens int  `json:"cacheCreationInputTokens,omitempty"`
+	TotalTokens              int  `json:"totalTokens"`
+	Partial                  bool `json:"partial,omitempty"`
 }
 
 // TraceOverviewResponse represents the response for trace overview queries

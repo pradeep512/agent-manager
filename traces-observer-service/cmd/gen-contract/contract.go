@@ -57,6 +57,17 @@ var Contract = []KindSpec{
 			{Key: "gen_ai.usage.input_tokens", Type: "integer", Required: true, Min: ptr(0)},
 			{Key: "gen_ai.usage.output_tokens", Type: "integer", Required: true, Min: ptr(0)},
 			{Key: "gen_ai.usage.cache_read_input_tokens", Type: "integer", Min: ptr(0)},
+			// Anthropic prompt-caching write (cache creation). Optional; the
+			// observer reads cache_creation_input_tokens into the trace total.
+			// The ephemeral_1h/5m split sums to cache_creation_input_tokens and
+			// is declared for fidelity (not separately totalled, to avoid
+			// double-counting).
+			{Key: "gen_ai.usage.cache_creation_input_tokens", Type: "integer", Min: ptr(0)},
+			{Key: "gen_ai.usage.cache_creation.ephemeral_1h_input_tokens", Type: "integer", Min: ptr(0)},
+			{Key: "gen_ai.usage.cache_creation.ephemeral_5m_input_tokens", Type: "integer", Min: ptr(0)},
+			// Anthropic provider metadata (not token counts).
+			{Key: "gen_ai.anthropic.service_tier", Type: "string"},
+			{Key: "gen_ai.anthropic.inference_geo", Type: "string"},
 		},
 	},
 	{

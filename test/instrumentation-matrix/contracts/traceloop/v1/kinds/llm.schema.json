@@ -17,6 +17,12 @@
         }
       ],
       "properties": {
+        "gen_ai.anthropic.inference_geo": {
+          "type": "string"
+        },
+        "gen_ai.anthropic.service_tier": {
+          "type": "string"
+        },
         "gen_ai.operation.name": {
           "minLength": 1,
           "type": "string"
@@ -36,6 +42,18 @@
         },
         "gen_ai.system": {
           "type": "string"
+        },
+        "gen_ai.usage.cache_creation.ephemeral_1h_input_tokens": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "gen_ai.usage.cache_creation.ephemeral_5m_input_tokens": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "gen_ai.usage.cache_creation_input_tokens": {
+          "minimum": 0,
+          "type": "integer"
         },
         "gen_ai.usage.cache_read_input_tokens": {
           "minimum": 0,

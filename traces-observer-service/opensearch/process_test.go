@@ -436,6 +436,47 @@ func TestExtractTokenUsage(t *testing.T) {
 		}
 	})
 
+	t.Run("includes cache read and creation in trace total", func(t *testing.T) {
+		spans := []Span{
+			{
+				Attributes: map[string]interface{}{
+					"gen_ai.usage.input_tokens":                float64(100),
+					"gen_ai.usage.output_tokens":               float64(50),
+					"gen_ai.usage.cache_read_input_tokens":     float64(200),
+					"gen_ai.usage.cache_creation_input_tokens": float64(40),
+				},
+			},
+			{
+				Attributes: map[string]interface{}{
+					"gen_ai.usage.input_tokens":            float64(10),
+					"gen_ai.usage.output_tokens":           float64(5),
+					"gen_ai.usage.cache_read_input_tokens": float64(60),
+				},
+			},
+		}
+
+		usage := ExtractTokenUsage(spans)
+		if usage == nil {
+			t.Fatal("expected token usage, got nil")
+		}
+		if usage.InputTokens != 110 {
+			t.Errorf("expected input tokens 110, got %d", usage.InputTokens)
+		}
+		if usage.OutputTokens != 55 {
+			t.Errorf("expected output tokens 55, got %d", usage.OutputTokens)
+		}
+		if usage.CacheReadInputTokens != 260 {
+			t.Errorf("expected cache read tokens 260, got %d", usage.CacheReadInputTokens)
+		}
+		if usage.CacheCreationInputTokens != 40 {
+			t.Errorf("expected cache creation tokens 40, got %d", usage.CacheCreationInputTokens)
+		}
+		// Total now reflects real token volume incl. cache read + creation.
+		if usage.TotalTokens != 465 {
+			t.Errorf("expected total tokens 465 (110+55+260+40), got %d", usage.TotalTokens)
+		}
+	})
+
 	t.Run("returns nil when no GenAI spans", func(t *testing.T) {
 		spans := []Span{
 			{
@@ -524,6 +565,26 @@ func TestExtractTokenUsageFromAttributes(t *testing.T) {
 		}
 		if usage.CacheReadInputTokens != 25 {
 			t.Errorf("expected cache read tokens 25, got %d", usage.CacheReadInputTokens)
+		}
+	})
+
+	t.Run("cache creation tokens", func(t *testing.T) {
+		attrs := map[string]interface{}{
+			"gen_ai.usage.input_tokens":                float64(100),
+			"gen_ai.usage.output_tokens":               float64(50),
+			"gen_ai.usage.cache_creation_input_tokens": float64(40),
+		}
+		usage := extractTokenUsageFromAttributes(attrs)
+		if usage == nil {
+			t.Fatal("expected token usage, got nil")
+		}
+		if usage.CacheCreationInputTokens != 40 {
+			t.Errorf("expected cache creation tokens 40, got %d", usage.CacheCreationInputTokens)
+		}
+		// Cache tokens are surfaced separately and are NOT folded into the
+		// per-span TotalTokens (mirrors the existing cache_read behaviour).
+		if usage.TotalTokens != 150 {
+			t.Errorf("expected per-span total 150, got %d", usage.TotalTokens)
 		}
 	})
 
