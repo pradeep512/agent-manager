@@ -182,7 +182,7 @@ func TestDryRunAllSevenSpanKinds(t *testing.T) {
 		for i, s := range llmSpans {
 			assertAttr(t, s, "gen_ai.operation.name", "chat")
 			assertAttr(t, s, "gen_ai.system", "anthropic")
-			assertAttr(t, s, "gen_ai.request.model", chatModel)
+			assertAttr(t, s, "gen_ai.request.model", activeChatModel())
 			assertAttrExists(t, s, "gen_ai.usage.input_tokens")
 			assertAttrExists(t, s, "gen_ai.usage.output_tokens")
 			if s.SpanKind != trace.SpanKindClient {

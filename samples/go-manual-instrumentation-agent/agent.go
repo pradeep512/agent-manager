@@ -61,17 +61,26 @@ import (
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const (
-	chatModel           = "claude-3-5-haiku-20241022"
-	simulatedEmbedModel = "voyage-3-lite" // simulated; Anthropic has no embeddings API
-	rerankModel         = "rerank-1"      // simulated rerank
+	chatModelDefault    = "claude-sonnet-4-6" // current Sonnet; override via ANTHROPIC_MODEL env
+	simulatedEmbedModel = "voyage-3-lite"     // simulated; Anthropic has no embeddings API
+	rerankModel         = "rerank-1"          // simulated rerank
 	topK                = 3
 	maxTokens           = 1024
 )
 
-// systemPrompt is deliberately long so Anthropic's prompt caching fires.
-// The cache_control breakpoint is placed on this block. A real agent would use a
-// longer, stable knowledge base preamble; this prompt is padded to ensure the
-// 1024-token minimum for caching is easily met.
+// activeChatModel returns the Anthropic chat model to use, preferring the
+// ANTHROPIC_MODEL environment variable over the compiled-in default.
+func activeChatModel() string {
+	if m := os.Getenv("ANTHROPIC_MODEL"); m != "" {
+		return m
+	}
+	return chatModelDefault
+}
+
+// systemPrompt is deliberately padded so Anthropic's prompt caching fires in
+// live mode. The cache_control breakpoint is placed on this block.
+// claude-sonnet-4-6 requires a 2048-token minimum per cacheable block; this
+// prompt is sized to comfortably exceed that threshold (~2600+ tokens).
 const systemPrompt = `You are a knowledgeable assistant that answers questions about the WSO2 Agent Manager (AMP) platform.
 
 You have been provided with relevant context documents retrieved from a knowledge base. Use ONLY the provided context to answer the user's question. If the context does not contain enough information to answer the question, say so clearly and do not make up information.
@@ -109,6 +118,62 @@ Platform-hosted agents run inside the AMP Kubernetes cluster via Choreo's worklo
 
 SECURITY:
 API keys are rotated via AMP Console key management. The Go SDK reads AMP_AGENT_API_KEY once at Init() (rotation requires restart in v1; designed for v2 file-watcher refresh without an API break).
+
+EXTENDED ARCHITECTURE REFERENCE:
+
+DEPLOYMENT ARCHITECTURES:
+AMP supports two primary deployment patterns for agent connectivity.
+
+Pattern A — Platform-Hosted (Internal) Agents:
+The agent workload runs as a Kubernetes Deployment inside the AMP cluster, managed by Choreo's workload runtime. The env-injection trait automatically injects three environment variables into every container: AMP_OTEL_ENDPOINT (the cluster-internal OTLP HTTP collector URL), AMP_AGENT_API_KEY (a per-agent API key for the x-amp-api-key header), and AMP_TRACE_CONTENT (optional flag controlling content redaction, default true). The agent calls amp.Init() with no explicit configuration; the SDK reads these variables automatically. No inbound firewall rules are needed because all traffic flows outbound from agent to collector within the cluster network.
+
+Pattern B — Externally-Hosted (Remote) Agents:
+The agent runs outside the AMP cluster (on the user's own cloud, on-prem, or on a developer laptop). The user supplies AMP_OTEL_ENDPOINT, AMP_AGENT_API_KEY, and optionally AMP_COMPONENT_UID as environment variables. The amp.Init() SDK call reads these and configures an OTLP/HTTP exporter that sends spans to the AMP gateway. All spans carry the component-uid resource attribute so the gateway routes them to the correct agent's trace store. External agents must ensure outbound HTTPS to the AMP_OTEL_ENDPOINT host is permitted by their network policy.
+
+OPENTELEMETRY SPAN CONTRACT (per kind):
+Every AMP span must carry a minimum set of attributes to be rendered correctly by the observer:
+
+agent spans: gen_ai.system (provider name), gen_ai.request.model, gen_ai.usage.input_tokens, gen_ai.usage.output_tokens, traceloop.span.kind="agent", traceloop.entity.name (agent name). Also carries cache token fields and optional gen_ai.agent.description and gen_ai.agent.conversation.id.
+
+chain spans: traceloop.span.kind="workflow", traceloop.entity.name, traceloop.entity.input (JSON-encoded), traceloop.entity.output (JSON-encoded). Chain spans are the primary grouping unit for multi-step pipelines.
+
+embedding spans: gen_ai.system, gen_ai.request.model, gen_ai.response.model, gen_ai.usage.input_tokens, traceloop.span.kind="embedding". The embedding input texts are set as traceloop.entity.input.
+
+retriever spans: db.system (vector store type, e.g. "chroma"), db.collection.name, traceloop.span.kind="retriever". Per-hit attributes include gen_ai.retrieval.source.id and gen_ai.retrieval.source.score.
+
+rerank spans: traceloop.span.kind="reranking", gen_ai.request.model, traceloop.entity.input (query JSON), candidate count in traceloop.entity.name.
+
+tool spans: traceloop.span.kind="tool", traceloop.entity.name (tool name), traceloop.entity.input (JSON-encoded arguments), traceloop.entity.output (JSON-encoded result). The gen_ai.tool.call.id links the tool span to the LLM call that requested it.
+
+llm spans: gen_ai.system, gen_ai.request.model, gen_ai.response.model, gen_ai.usage.input_tokens, gen_ai.usage.output_tokens, gen_ai.usage.cache_creation_input_tokens, gen_ai.usage.cache_read_input_tokens, traceloop.span.kind="llm", traceloop.entity.input (JSON messages), traceloop.entity.output (JSON messages). Temperature is set as gen_ai.request.temperature when explicitly configured.
+
+PROMPT CACHING MECHANICS (ANTHROPIC-SPECIFIC):
+Anthropic's prompt caching feature lets you designate a prefix of the conversation context (typically the system prompt) as cacheable by attaching a cache_control block of type "ephemeral" to the last system block. Anthropic caches that prefix server-side for up to 5 minutes (ephemeral tier). On the first call, the prefix is written to the cache; usage.cache_creation_input_tokens reflects the tokens written. On subsequent calls within the 5-minute window that send the same prefix, usage.cache_read_input_tokens is nonzero and cache_creation_input_tokens is 0 — the prefix is served from the cache at a reduced input-token cost.
+
+Minimum token thresholds (model-dependent):
+- claude-sonnet-4-6 and claude-opus-4-8: 2048-token minimum cacheable prefix
+- Legacy claude-sonnet-4-5-20250929: 1024-token minimum cacheable prefix
+
+The AMP Go SDK maps all four Anthropic usage fields (input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens) onto amp.LLMUsage and rolls them up to the root agent span automatically. The observer sums all four into TotalTokens at the trace level.
+
+SDK INITIALIZATION AND SHUTDOWN:
+The amp.Init(ctx) function performs the following steps in order:
+1. Reads AMP_OTEL_ENDPOINT and appends /v1/traces for the OTLP HTTP exporter endpoint.
+2. Reads AMP_AGENT_API_KEY and configures the x-amp-api-key request header.
+3. Reads AMP_COMPONENT_UID (optional; required only for external agents that need to specify component identity directly).
+4. Reads AMP_TRACE_CONTENT (default "true"); if "false", all content fields (prompts, completions, tool arguments and results) are replaced with "[redacted]" before export.
+5. Registers a BatchSpanProcessor backed by the OTLP HTTP exporter with a 5-second flush interval.
+6. Sets the global W3C trace-context and baggage propagators for cross-service trace continuation.
+The amp.Shutdown(ctx) call flushes all pending spans and closes the exporter.
+
+MULTI-TENANCY AND RBAC:
+AMP uses a three-level hierarchy: organization → project → agent. Each level has its own RBAC roles. Organization admins have full access to all projects and agents, user management, and billing. Project owners can manage agents within a project, configure evaluators, and view traces. Agent viewers have read-only access to traces and evaluation results for a specific agent. API keys are scoped to a single agent; traces carrying a different component-uid than the key's registered agent are rejected at the gateway.
+
+EVALUATION FRAMEWORK:
+AMP evaluators are scheduled or on-demand jobs that scan a time range of agent traces and score each interaction. LLM-as-judge evaluators send the span's input and output to a judge model with a rubric prompt and return a numeric score plus textual rationale. Deterministic evaluators run code-based scorers (regex match, JSON schema validation, embedding similarity) without additional LLM cost. Both evaluator types use W3C baggage task_id and trial_id to correlate evaluation runs with specific agent traces. The amp.WithEvaluation(ctx, taskID, trialID) helper injects these values into the outgoing baggage so the evaluator can locate the correct trace without re-running the agent.
+
+CONTENT REDACTION:
+When AMP_TRACE_CONTENT=false, the SDK replaces all user-visible text fields with "[redacted]" before exporting spans. Affected fields include: traceloop.entity.input, traceloop.entity.output, gen_ai.prompt, gen_ai.completion. Structural metadata (roles, token counts, model names, tool names, span kinds, and timestamps) is always retained regardless of the redaction setting.
 
 Instructions:
 - Answer concisely using only the provided context.
@@ -420,7 +485,7 @@ func runAgent(ctx context.Context, question, conversationID string, taskID, tria
 		Name:               "amp-rag-agent",
 		Description:        "Answers questions about WSO2 Agent Manager from a knowledge base.",
 		Framework:          "anthropic",
-		RequestModel:       chatModel,
+		RequestModel:       activeChatModel(),
 		SystemInstructions: systemPrompt,
 		ConversationID:     conversationID,
 		InputMessages:      []map[string]any{{"role": "user", "content": question}},
@@ -544,7 +609,7 @@ func ragPipeline(ctx context.Context, question string, toolDefs []map[string]any
 
 	ctx, llm1Span, llm1Result := amp.LLMSpan(ctx, amp.LLMInput{
 		System:         "anthropic",
-		RequestModel:   chatModel,
+		RequestModel:   activeChatModel(),
 		InputMessages:  llm1InputMsgs,
 		Temperature:    0.3,
 		SetTemperature: true,
@@ -556,7 +621,7 @@ func ragPipeline(ctx context.Context, question string, toolDefs []map[string]any
 		// cache_creation_input_tokens > 0 because this is the first call with
 		// the cached system prompt (the cache is being written).
 		toolCallInput = map[string]any{"text": contextText}
-		llm1Result.ResponseModel = chatModel
+		llm1Result.ResponseModel = activeChatModel()
 		llm1Result.OutputMessages = []map[string]any{
 			{
 				"role":    "assistant",
@@ -583,7 +648,7 @@ func ragPipeline(ctx context.Context, question string, toolDefs []map[string]any
 		// Real Anthropic call with prompt caching enabled.
 		client := newAnthropicClient(os.Getenv("ANTHROPIC_API_KEY"))
 		resp, err := client.call(ctx, anthropicRequest{
-			Model:     chatModel,
+			Model:     activeChatModel(),
 			MaxTokens: maxTokens,
 			System: []systemBlock{
 				{
@@ -721,7 +786,7 @@ func ragPipeline(ctx context.Context, question string, toolDefs []map[string]any
 
 	_, llm2Span, llm2Result := amp.LLMSpan(ctx, amp.LLMInput{
 		System:         "anthropic",
-		RequestModel:   chatModel,
+		RequestModel:   activeChatModel(),
 		InputMessages:  llm2InputMsgs,
 		Temperature:    0.3,
 		SetTemperature: true,
@@ -740,7 +805,7 @@ func ragPipeline(ctx context.Context, question string, toolDefs []map[string]any
 				"AMP captures every agent interaction as OpenTelemetry traces with full token-usage breakdowns including prompt caching costs.",
 			count,
 		)
-		llm2Result.ResponseModel = chatModel
+		llm2Result.ResponseModel = activeChatModel()
 		llm2Result.OutputMessages = []map[string]any{
 			{"role": "assistant", "content": answer},
 		}
@@ -754,7 +819,7 @@ func ragPipeline(ctx context.Context, question string, toolDefs []map[string]any
 		// Real Anthropic call — the system prompt cache hit is expected here.
 		client := newAnthropicClient(os.Getenv("ANTHROPIC_API_KEY"))
 		resp, err := client.call(ctx, anthropicRequest{
-			Model:     chatModel,
+			Model:     activeChatModel(),
 			MaxTokens: maxTokens,
 			System: []systemBlock{
 				{
